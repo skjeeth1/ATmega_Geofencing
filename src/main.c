@@ -6,10 +6,7 @@
 
 #include "config.h"
 
-extern "C"
-{
 #include <uart_hal.h>
-}
 
 int main(void)
 {
