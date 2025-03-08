@@ -1,6 +1,6 @@
 #include "uart_hal.h"
 
-volatile static uint8_t rx_buffer[RX_BUFFER_SIZE] = {0};
+volatile static char rx_buffer[RX_BUFFER_SIZE] = {0};
 volatile static uint16_t rx_count = 0;
 volatile static uint8_t uart_tx_busy = 1;
 
@@ -24,7 +24,6 @@ ISR(USART_TX_vect)
 
 void uart_init(uint32_t baud, uint8_t high_speed)
 {
-
     uint8_t speed = 16;
 
     if (high_speed != 0)
@@ -33,7 +32,7 @@ void uart_init(uint32_t baud, uint8_t high_speed)
         UCSR0A |= 1 << U2X0;
     }
 
-    baud = (F_CPU1 / (speed * baud)) - 1;
+    baud = (F_CPU / (speed * baud)) - 1;
 
     UBRR0H = (baud & 0x0F00) >> 8;
     UBRR0L = (baud & 0x00FF);
@@ -41,7 +40,7 @@ void uart_init(uint32_t baud, uint8_t high_speed)
     UCSR0B |= (1 << TXEN0) | (1 << RXEN0) | (1 << TXCIE0) | (1 << RXCIE0);
 }
 
-void uart_send_byte(uint8_t c)
+void uart_send_byte(char c)
 {
     while (uart_tx_busy == 0)
         ;
@@ -49,7 +48,7 @@ void uart_send_byte(uint8_t c)
     UDR0 = c;
 }
 
-void uart_send_array(uint8_t *c, uint16_t len)
+void uart_send_array(char *c, uint16_t len)
 {
     for (uint16_t i = 0; i < len; i++)
     {
@@ -57,7 +56,7 @@ void uart_send_array(uint8_t *c, uint16_t len)
     }
 }
 
-void uart_send_string(uint8_t *c)
+void uart_send_string(char *c)
 {
     uint16_t i = 0;
     do
@@ -77,7 +76,7 @@ uint16_t uart_read_count(void)
 uint8_t uart_read(void)
 {
     static uint16_t rx_read_pos = 0;
-    uint8_t data = 0;
+    char data = 0;
 
     data = rx_buffer[rx_read_pos];
     rx_read_pos++;

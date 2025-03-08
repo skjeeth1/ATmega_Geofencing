@@ -3,18 +3,21 @@
 #include <util/delay.h>
 #include <avr/interrupt.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include "config.h"
 
 #include <uart_hal.h>
 
+uint8_t receiveDataComplete = false;
+
+void get_uart_data(char *);
+
 int main(void)
 {
-    uint8_t start[] = "Program Start\n\r";
+    char start[] = "Program Start\n\r";
 
-    uint8_t inputString[200];
-    uint8_t cur_pointer = 0;
-    uint8_t data;
+    char inputString[RX_BUFFER_SIZE];
 
     DDRD |= 0xF0; // 0b11110000
     uart_init(9600, 0);
@@ -22,22 +25,46 @@ int main(void)
     sei();
     uart_send_string(start);
 
-    while (1)
+    char signal[] = "$GPGLL";
+    char signal_header[6];
+
+    while (true)
     {
-        if (uart_read_count() > 0)
+        get_uart_data(inputString);
+        _delay_ms(1000);
+
+        if (receiveDataComplete)
         {
-            data = uart_read();
-            if (data == 'j')
+            strncpy(signal_header, inputString, 6);
+            signal_header[6] = '\0';
+            if (!strcmp(signal_header, signal))
             {
-                inputString[cur_pointer] = '\0';
                 uart_send_string(inputString);
-                cur_pointer = 0;
             }
-            else
-            {
-                inputString[cur_pointer] = data;
-                cur_pointer += 1;
-            }
+        }
+    }
+}
+
+void get_uart_data(char *inputString)
+{
+    static uint8_t cur_pointer = 0;
+    char data;
+
+    receiveDataComplete = false;
+
+    while (uart_read_count() > 0)
+    {
+        data = uart_read();
+        if (data == '\n')
+        {
+            inputString[cur_pointer] = '\0';
+            receiveDataComplete = true;
+            cur_pointer = 0;
+        }
+        else
+        {
+            inputString[cur_pointer] = data;
+            cur_pointer += 1;
         }
     }
 }
