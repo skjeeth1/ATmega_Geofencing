@@ -4,38 +4,46 @@
 #include <avr/interrupt.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
-#include <SoftwareSerial.h>
-#include <Arduino.h>
+// #include <SoftwareSerial.h>
+// #include <Arduino.h>
 
 #include "config.h"
 
 extern "C"
 {
 #include <uart_hal.h>
+#include <soft_uart.h>
+#include <ray_cast.h>
 }
 
-uint8_t receiveDataComplete = false;
-
-SoftwareSerial gps_serial(6, 5);
-char receivedString[200];    // a String to hold incoming data
-bool stringComplete = false; // whether the string is complete
+struct Point
+{
+    double lat, lon;
+};
 
 void get_uart_data(char *);
 void getGPSdata();
+bool geofence(Point, Point, int);
+
+char SerialData[RX_BUFFER_SIZE];
+bool receiveDataComplete = false;
+
+char GPSdata[RX_BUFFER_SIZE]; // a String to hold incoming data
+bool receivedGPSdata = false; // whether the string is complete
 
 int main(void)
 {
     char start[] = "Program Start\n\r";
 
-    char inputString[RX_BUFFER_SIZE];
-
     DDRD |= 0xF0; // 0b11110000
     uart_init(9600, 0);
 
-    pinMode(6, INPUT);
-    pinMode(5, OUTPUT);
-    gps_serial.begin(9600);
+    DDRD &= ~(1 << RX_PIN);
+    PORTD |= (1 << RX_PIN); // Enable pull-up for RX
+
+    soft_uart_init(9600);
 
     sei();
     uart_send_string(start);
@@ -43,59 +51,39 @@ int main(void)
     char signal[] = "$GPGLL";
     char signal_header[6];
 
-    char LAT[11];
-    char LON[11];
+    char LAT[13];
+    char LON[13];
+
+    Point cur_location = {0, 0};
+    Point origin = {0, 0};
 
     while (true)
     {
-        get_uart_data(inputString);
+        // get_uart_data(SerialData);
         getGPSdata();
 
-        if (receiveDataComplete)
+        if (receivedGPSdata)
         {
-            // strncpy(signal_header, inputString, 6);
-            // signal_header[6] = '\0';
-            // if (!strcmp(signal_header, signal))
-            // {
-            //     uart_send_string(inputString);
-            // }
-        }
-
-        if (stringComplete)
-        {
-            strncpy(signal_header, receivedString, 6);
+            strncpy(signal_header, GPSdata, 6);
             signal_header[6] = '\0';
             if (!strcmp(signal_header, signal))
             {
-                strncpy(LAT, receivedString + 7, 10);
-                LAT[11] = '\0';
-                // int LATperiod = LAT.indexOf('.');
-                // int LATzero = LAT.indexOf('0');
-                // if (LATzero == 0)
-                // {
-                //     LAT = LAT.substring(1);
-                // }
+                strncpy(LAT, GPSdata + 7, 12);
+                LAT[12] = '\0';
 
-                strncpy(LON, receivedString + 20, 10);
-                LON[11] = '\0';
-                // String LON = receivedString.substring(20, 31);
-                // int LONperiod = LON.indexOf('.');
-                // int LONTzero = LON.indexOf('0');
-                // if (LONTzero == 0)
-                // {
-                //     LON = LON.substring(1);
-                // }`
-
-                // Serial.println(LAT);
-                // Serial.println(LON);
-
-                // location.x = LAT.toDouble();
-                // location.y = LON.toDouble();
+                strncpy(LON, GPSdata + 22, 12);
+                LON[12] = '\0';
 
                 uart_send_string(LAT);
                 uart_send_byte('\n');
                 uart_send_string(LON);
                 uart_send_byte('\n');
+
+                cur_location.lat = strtod(LAT, NULL);
+                cur_location.lon = strtod(LON, NULL);
+
+                bool status = geofence(cur_location, origin, 500);
+                uart_send_byte(status ? 'y' : 'n');
             }
         }
 
@@ -105,7 +93,7 @@ int main(void)
 
 void get_uart_data(char *inputString)
 {
-    static uint8_t cur_pointer = 0;
+    static uint16_t cur_pointer = 0;
     char data;
 
     receiveDataComplete = false;
@@ -127,24 +115,34 @@ void get_uart_data(char *inputString)
     }
 }
 
+bool geofence(Point gps, Point origin, int distance)
+// Function to check if the GPS location is within the geofence
+{
+    double x = gps.lat - origin.lat;
+    double y = gps.lon - origin.lon;
+    double distanceSquared = x * x + y * y;
+    return distanceSquared <= distance * distance;
+}
+
 void getGPSdata()
 {
-    stringComplete = false;
-    static uint8_t cur_pointer1 = 0;
-    while (gps_serial.available())
-    {
-        // get the new byte:
-        char inChar = (char)gps_serial.read();
+    static uint16_t cur_pointer1 = 0;
+    char data;
 
-        if (inChar == '\n')
+    receivedGPSdata = false;
+
+    while (soft_uart_read_count() > 0)
+    {
+        data = soft_uart_read();
+        if (data == '\n')
         {
-            receivedString[cur_pointer1] = '\0';
-            stringComplete = true;
+            GPSdata[cur_pointer1] = '\0';
+            receivedGPSdata = true;
             cur_pointer1 = 0;
         }
         else
         {
-            receivedString[cur_pointer1] = inChar;
+            GPSdata[cur_pointer1] = data;
             cur_pointer1 += 1;
         }
     }

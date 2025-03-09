@@ -73,7 +73,7 @@ uint16_t uart_read_count(void)
     return rx_count;
 }
 
-uint8_t uart_read(void)
+char uart_read(void)
 {
     static uint16_t rx_read_pos = 0;
     char data = 0;

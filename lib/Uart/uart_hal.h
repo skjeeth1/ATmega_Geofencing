@@ -15,6 +15,6 @@ void uart_send_byte(char c);
 void uart_send_array(char *c, uint16_t len);
 void uart_send_string(char *c);
 uint16_t uart_read_count(void);
-uint8_t uart_read(void);
+char uart_read(void);
 
 #endif /* UART_HAL_H_ */
