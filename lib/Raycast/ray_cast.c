@@ -7,6 +7,7 @@ vec vsub(vec a, vec b)
     c.y = a.y - b.y;
     return c;
 }
+
 vec vadd(vec a, vec b)
 {
     vec c;
@@ -14,8 +15,16 @@ vec vadd(vec a, vec b)
     c.y = a.y + b.y;
     return c;
 }
+
 double vdot(vec a, vec b) { return a.x * b.x + a.y * b.y; }
+
 double vcross(vec a, vec b) { return a.x * b.y - a.y * b.x; }
+
+double vmag(vec a)
+{
+    double sum = a.x * a.x + a.y * a.y;
+    return sqrt(sum);
+}
 
 /* return a + s * b */
 vec vmadd(vec a, double s, vec b)
@@ -37,7 +46,7 @@ vec vmadd(vec a, double s, vec b)
    returns: 1 for intersect, -1 for not, 0 for hard to say (if the intersect
    point is too close to y0 or y1)
 */
-int intersect(vec x0, vec x1, vec y0, vec y1, double tol, vec *sect)
+int8_t intersect(vec x0, vec x1, vec y0, vec y1, double tol, vec *sect)
 {
     vec dx = vsub(x1, x0), dy = vsub(y1, y0);
     double d = vcross(dy, dx), a;
@@ -79,7 +88,7 @@ double dist(vec x, vec y0, vec y1, double tol)
 
 #define for_v(i, z, p) for (i = 0, z = p->v; i < p->n; i++, z++)
 /* returns 1 for inside, -1 for outside, 0 for on edge */
-int inside(vec v, polygon p, double tol)
+int8_t inside(vec v, polygon p, double tol)
 {
     /* should assert p->n > 1 */
     int i, k, crosses, intersectResult;

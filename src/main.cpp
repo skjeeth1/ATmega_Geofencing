@@ -18,20 +18,28 @@ extern "C"
 #include <ray_cast.h>
 }
 
-struct Point
-{
-    double lat, lon;
-};
-
 void get_uart_data(char *);
 void getGPSdata();
-bool geofence(Point, Point, int);
+bool geofence(vec, vec, double);
+int SIMInit(void);
+void error(void);
+void receiveSMS();
+void parseMessage(char *message);
+void set_origin();
+void set_distance(int distance);
+
+#define LED_PIN PD6
+#define PHONE_NUMBER "+916282591266"
 
 char SerialData[RX_BUFFER_SIZE];
 bool receiveDataComplete = false;
 
 char GPSdata[RX_BUFFER_SIZE]; // a String to hold incoming data
 bool receivedGPSdata = false; // whether the string is complete
+
+vec cur_location = {0.0, 0.0};
+vec origin = {0.0, 0.0};
+int geofence_dist = 500;
 
 int main(void)
 {
@@ -42,6 +50,9 @@ int main(void)
 
     DDRD &= ~(1 << RX_PIN);
     PORTD |= (1 << RX_PIN); // Enable pull-up for RX
+
+    DDRD |= (1 << LED_PIN);
+    // PORTD &= ~(1 << LED_PIN);
 
     soft_uart_init(9600);
 
@@ -54,8 +65,22 @@ int main(void)
     char LAT[13];
     char LON[13];
 
-    Point cur_location = {0, 0};
-    Point origin = {0, 0};
+    bool inside = 0;
+
+    // vec vsq[] = {{0, 0}, {10, 0}, {10, 10}, {0, 10}, {2.5, 2.5}, {7.5, 0.1}, {7.5, 7.5}, {2.5, 7.5}};
+
+    // polygon_t sq = {4, vsq}; /* outer square */
+    // polygon_t sq_hole = {8, vsq}; /* outer and inner square, ie hole */
+
+    // vec b = {15, 15};
+    // vec c = {10, 5}; /* on edge */
+    // vec d = {5, 5};
+
+    int SIMstatus = SIMInit();
+    if (SIMstatus)
+    {
+        return 1;
+    }
 
     while (true)
     {
@@ -79,11 +104,20 @@ int main(void)
                 uart_send_string(LON);
                 uart_send_byte('\n');
 
-                cur_location.lat = strtod(LAT, NULL);
-                cur_location.lon = strtod(LON, NULL);
+                cur_location.x = strtod(LAT, NULL);
+                cur_location.y = strtod(LON, NULL);
 
-                bool status = geofence(cur_location, origin, 500);
-                uart_send_byte(status ? 'y' : 'n');
+                // sprintf(blah, "%d", (int)cur_location.x);
+                // uart_send_string(blah);
+                // sprintf(blah, "%d", (int)cur_location.y);
+                // uart_send_string(blah);
+
+                bool status = geofence(cur_location, origin, geofence_dist);
+                if (status != inside)
+                {
+                    uart_send_byte('b');
+                }
+                inside = status;
             }
         }
 
@@ -115,13 +149,11 @@ void get_uart_data(char *inputString)
     }
 }
 
-bool geofence(Point gps, Point origin, int distance)
+bool geofence(vec gps, vec origin, double distance)
 // Function to check if the GPS location is within the geofence
 {
-    double x = gps.lat - origin.lat;
-    double y = gps.lon - origin.lon;
-    double distanceSquared = x * x + y * y;
-    return distanceSquared <= distance * distance;
+    vec dist = vsub(gps, origin);
+    return distance > vmag(dist);
 }
 
 void getGPSdata()
@@ -146,4 +178,102 @@ void getGPSdata()
             cur_pointer1 += 1;
         }
     }
+}
+
+int SIMInit()
+{
+    char receive[10];
+    char success[] = "OK";
+
+    uart_send_string("AT\n");
+    _delay_ms(1000);
+
+    get_uart_data(receive);
+
+    if (strcmp(receive, success))
+    {
+        error();
+        return 1;
+    }
+
+    uart_send_string("AT+CMGF=1\n"); // Configure Text Mode
+    _delay_ms(1000);
+    uart_send_string("AT+CMGS=\"+916282591266\"\n");
+    _delay_ms(1000);
+    uart_send_string("Device is Armed!\n");
+    _delay_ms(1000);
+    uart_send_byte(26); // Terminate char
+    _delay_ms(1000);
+
+    uart_send_string("AT+CNMI=1,2,0,0,0\n");
+    _delay_ms(1000);
+
+    return 0;
+}
+
+void receiveSMS()
+{
+    char receivedData[RX_BUFFER_SIZE];
+    get_uart_data(receivedData);
+
+    char *num_start, *msg_start;
+    char sender[20], message[160];
+
+    if (receiveDataComplete)
+    {
+        // Find the phone number in the response
+        num_start = strchr(receivedData, '"'); // First quote
+        if (!num_start)
+            return;
+        num_start++; // Move past first quote
+
+        char *num_end = strchr(num_start, '"'); // Find closing quote
+        if (!num_end)
+            return;
+
+        // Extract phone number
+        strncpy(sender, num_start, num_end - num_start);
+        sender[num_end - num_start] = '\0'; // Null-terminate
+
+        if (strcmp(sender, PHONE_NUMBER) != 0)
+            return; // Ignore unknown number
+
+        // Find the message start (after newline)
+        msg_start = strchr(num_end, '\n'); // Find first newline
+        if (!msg_start)
+            return;
+        msg_start++; // Move to the next line (message start)
+
+        // Copy message
+        strcpy(message, msg_start);
+    }
+}
+
+void parseMessage(char *message)
+{
+    if (strcmp(message, "SET_ORIGIN") == 0)
+    {
+        set_origin();
+    }
+    else if (strncmp(message, "SET_DISTANCE ", 13) == 0)
+    {
+        int new_distance = atoi(message + 13); // Extract integer after "SET_DISTANCE "
+        set_distance(new_distance);
+    }
+}
+
+void set_origin()
+{
+    origin.x = cur_location.x;
+    origin.y = cur_location.y;
+}
+
+void set_distance(int distance)
+{
+    geofence_dist = distance;
+}
+
+void error()
+{
+    PORTD |= (1 << LED_PIN);
 }
