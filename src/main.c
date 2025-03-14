@@ -12,12 +12,9 @@
 
 #include "config.h"
 
-extern "C"
-{
 #include <uart_hal.h>
 #include <soft_uart.h>
 #include <ray_cast.h>
-}
 
 void get_uart_data(char *);
 void getGPSdata();
@@ -103,9 +100,9 @@ int main(void)
                 LON[12] = '\0';
 
                 uart_send_string(LAT);
-                uart_send_byte('\n');
+                uart_send_byte(0x0D);
                 uart_send_string(LON);
-                uart_send_byte('\n');
+                uart_send_byte(0x0D);
 
                 cur_location.x = strtod(LAT, NULL);
                 cur_location.y = strtod(LON, NULL);
@@ -227,14 +224,14 @@ void receiveSMS()
     char receivedData[RX_BUFFER_SIZE];
     get_uart_data(receivedData);
 
-    char *num_start, *msg_start;
+    char *num_start;
     char sender[20], message[160];
 
     if (receiveDataComplete)
     {
         uart_send_string("RECEIVED MESSAGE: ");
         uart_send_string(receivedData);
-        uart_send_byte('\n');
+        uart_send_byte(0x0D);
         // Find the phone number in the response
         num_start = strchr(receivedData, '"'); // First quote
         if (!num_start)
@@ -251,7 +248,7 @@ void receiveSMS()
 
         uart_send_string("SENDER: ");
         uart_send_string(sender);
-        uart_send_byte('\n');
+        uart_send_byte(0x0D);
         if (strcmp(sender, PHONE_NUMBER) != 0)
             return; // Ignore unknown number
     }
@@ -268,7 +265,7 @@ void receiveSMS()
         {
             uart_send_string("MESSAGE: ");
             uart_send_string(message);
-            uart_send_byte('\n');
+            uart_send_byte(0x0D);
             parseMessage(message);
             break;
         }
@@ -291,7 +288,7 @@ void parseMessage(char *message)
 void set_origin()
 {
     uart_send_string("SET ORIGIN!");
-    uart_send_byte('\n');
+    uart_send_byte(0x0D);
     origin.x = cur_location.x;
     origin.y = cur_location.y;
 
@@ -310,14 +307,14 @@ void set_distance(int distance)
     char blah[10];
     sprintf(blah, "%d", (int)geofence_dist);
     uart_send_string(blah);
-    uart_send_byte('\n');
+    uart_send_byte(0x0D);
 
     geofence_dist = distance;
 
     uart_send_string("NEW DISTANCE: ");
     sprintf(blah, "%d", (int)geofence_dist);
     uart_send_string(blah);
-    uart_send_byte('\n');
+    uart_send_byte(0x0D);
 }
 
 void send_message(char *message)
