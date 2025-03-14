@@ -8,7 +8,7 @@
 
 #include "config.h"
 
-#define RX_BUFFER_SIZE 128
+#define RX_BUFFER_SIZE 256
 
 void uart_init(uint32_t baud, uint8_t high_speed);
 void uart_send_byte(char c);

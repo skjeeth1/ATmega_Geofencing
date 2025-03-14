@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 // #include <SoftwareSerial.h>
 // #include <Arduino.h>
@@ -27,6 +28,7 @@ void receiveSMS();
 void parseMessage(char *message);
 void set_origin();
 void set_distance(int distance);
+void send_message(char *message);
 
 #define LED_PIN PD6
 #define PHONE_NUMBER "+916282591266"
@@ -37,7 +39,7 @@ bool receiveDataComplete = false;
 char GPSdata[RX_BUFFER_SIZE]; // a String to hold incoming data
 bool receivedGPSdata = false; // whether the string is complete
 
-vec cur_location = {0.0, 0.0};
+vec cur_location = {50.0, 50.0};
 vec origin = {0.0, 0.0};
 int geofence_dist = 500;
 
@@ -86,6 +88,7 @@ int main(void)
     {
         // get_uart_data(SerialData);
         getGPSdata();
+        receiveSMS();
 
         if (receivedGPSdata)
         {
@@ -115,7 +118,8 @@ int main(void)
                 bool status = geofence(cur_location, origin, geofence_dist);
                 if (status != inside)
                 {
-                    uart_send_byte('b');
+                    char mess[] = "Device has left the compound!";
+                    send_message(mess);
                 }
                 inside = status;
             }
@@ -188,12 +192,19 @@ int SIMInit()
     uart_send_string("AT\n");
     _delay_ms(1000);
 
-    get_uart_data(receive);
-
-    if (strcmp(receive, success))
+    while (1)
     {
-        error();
-        return 1;
+        get_uart_data(receive);
+
+        if (receiveDataComplete)
+        {
+            if (strcmp(receive, success))
+            {
+                error();
+                return 1;
+            }
+            break;
+        }
     }
 
     uart_send_string("AT+CMGF=1\n"); // Configure Text Mode
@@ -221,6 +232,9 @@ void receiveSMS()
 
     if (receiveDataComplete)
     {
+        uart_send_string("RECEIVED MESSAGE: ");
+        uart_send_string(receivedData);
+        uart_send_byte('\n');
         // Find the phone number in the response
         num_start = strchr(receivedData, '"'); // First quote
         if (!num_start)
@@ -235,17 +249,29 @@ void receiveSMS()
         strncpy(sender, num_start, num_end - num_start);
         sender[num_end - num_start] = '\0'; // Null-terminate
 
+        uart_send_string("SENDER: ");
+        uart_send_string(sender);
+        uart_send_byte('\n');
         if (strcmp(sender, PHONE_NUMBER) != 0)
             return; // Ignore unknown number
+    }
+    else
+    {
+        return;
+    }
 
-        // Find the message start (after newline)
-        msg_start = strchr(num_end, '\n'); // Find first newline
-        if (!msg_start)
-            return;
-        msg_start++; // Move to the next line (message start)
+    while (1)
+    {
+        get_uart_data(message);
 
-        // Copy message
-        strcpy(message, msg_start);
+        if (receiveDataComplete)
+        {
+            uart_send_string("MESSAGE: ");
+            uart_send_string(message);
+            uart_send_byte('\n');
+            parseMessage(message);
+            break;
+        }
     }
 }
 
@@ -257,20 +283,50 @@ void parseMessage(char *message)
     }
     else if (strncmp(message, "SET_DISTANCE ", 13) == 0)
     {
-        int new_distance = atoi(message + 13); // Extract integer after "SET_DISTANCE "
+        int new_distance = strtod(message + 13, NULL); // Extract integer after "SET_DISTANCE "
         set_distance(new_distance);
     }
 }
 
 void set_origin()
 {
+    uart_send_string("SET ORIGIN!");
+    uart_send_byte('\n');
     origin.x = cur_location.x;
     origin.y = cur_location.y;
+
+    char blah[10];
+    sprintf(blah, "%d\n", (int)origin.x);
+    uart_send_string(blah);
+    sprintf(blah, "%d\n", (int)origin.y);
+    uart_send_string(blah);
 }
 
 void set_distance(int distance)
 {
+    uart_send_string("SET DISTANCE!\n");
+    uart_send_string("PREVIOUS DISTANCE: ");
+
+    char blah[10];
+    sprintf(blah, "%d", (int)geofence_dist);
+    uart_send_string(blah);
+    uart_send_byte('\n');
+
     geofence_dist = distance;
+
+    uart_send_string("NEW DISTANCE: ");
+    sprintf(blah, "%d", (int)geofence_dist);
+    uart_send_string(blah);
+    uart_send_byte('\n');
+}
+
+void send_message(char *message)
+{
+    uart_send_string("AT+CMGS=\"+916282591266\"\n");
+    _delay_ms(1000);
+    uart_send_string(message);
+    _delay_ms(1000);
+    uart_send_byte(26);
 }
 
 void error()
