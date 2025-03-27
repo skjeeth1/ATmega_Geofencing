@@ -7,18 +7,21 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-// #include <SoftwareSerial.h>
-// #include <Arduino.h>
-
 #include "config.h"
 
 #include <uart_hal.h>
 #include <soft_uart.h>
-#include <ray_cast.h>
+// #include <ray_cast.h>
+
+typedef struct
+{
+    volatile unsigned long int x;
+    volatile unsigned long int y;
+} vec;
 
 void get_uart_data(char *);
 void getGPSdata();
-bool geofence(vec, vec, double);
+uint8_t geofence(vec, vec, double);
 int SIMInit(void);
 void error(void);
 void receiveSMS();
@@ -26,8 +29,16 @@ void parseMessage(char *message);
 void set_origin();
 void set_distance(int distance);
 void send_message(char *message);
+void outside_check();
+void inside_check();
+vec vsub(vec a, vec b);
+double vmag(vec a);
 
-#define LED_PIN PD6
+#define LED_PIN PB0
+
+#define LED_PINo PD5
+#define LED_PINi PD6
+
 #define PHONE_NUMBER "+916282591266"
 
 char SerialData[RX_BUFFER_SIZE];
@@ -37,23 +48,35 @@ char GPSdata[RX_BUFFER_SIZE]; // a String to hold incoming data
 bool receivedGPSdata = false; // whether the string is complete
 
 vec cur_location = {50.0, 50.0};
-vec origin = {0.0, 0.0};
-int geofence_dist = 500;
+// vec origin = {0832.7088, 7654.2633};
+vec origin = {0, 0};
+
+int geofence_dist = 100;
 
 int main(void)
 {
     char start[] = "Program Start\n\r";
 
     DDRD |= 0xF0; // 0b11110000
+
     uart_init(9600, 0);
+    soft_uart_init(9600);
 
     DDRD &= ~(1 << RX_PIN);
     PORTD |= (1 << RX_PIN); // Enable pull-up for RX
 
-    DDRD |= (1 << LED_PIN);
-    // PORTD &= ~(1 << LED_PIN);
+    DDRD |= (1 << PD1);
+    DDRD &= ~(1 << PD0);
+    // PORTD |= (1 << RX_PIN); // Enable pull-up for RX
 
-    soft_uart_init(9600);
+    DDRB |= (1 << LED_PIN);
+    PORTB &= ~(1 << LED_PIN);
+
+    DDRD |= (1 << LED_PINo);
+    PORTD &= ~(1 << LED_PINo);
+
+    DDRD |= (1 << LED_PINi);
+    PORTD &= ~(1 << LED_PINi);
 
     sei();
     uart_send_string(start);
@@ -61,63 +84,73 @@ int main(void)
     char signal[] = "$GPGLL";
     char signal_header[6];
 
-    char LAT[13];
-    char LON[13];
+    volatile char LAT[6];
+    volatile char LON[6];
 
-    bool inside = 0;
+    volatile char LAT1[6];
+    volatile char LON1[6];
+
+    volatile uint8_t inside = 1;
+    volatile uint8_t status = 0;
 
     // vec vsq[] = {{0, 0}, {10, 0}, {10, 10}, {0, 10}, {2.5, 2.5}, {7.5, 0.1}, {7.5, 7.5}, {2.5, 7.5}};
 
-    // polygon_t sq = {4, vsq}; /* outer square */
+    // polygon_t sq = {4, vsq};      /* outer square */
     // polygon_t sq_hole = {8, vsq}; /* outer and inner square, ie hole */
 
     // vec b = {15, 15};
     // vec c = {10, 5}; /* on edge */
     // vec d = {5, 5};
 
-    int SIMstatus = SIMInit();
-    if (SIMstatus)
-    {
-        return 1;
-    }
+    // int SIMstatus = SIMInit();
+    // if (SIMstatus)
+    // {
+    //     return 1;
+    // }
 
-    while (true)
+    while (1)
     {
-        // get_uart_data(SerialData);
         getGPSdata();
         receiveSMS();
 
         if (receivedGPSdata)
         {
+            // error();
             strncpy(signal_header, GPSdata, 6);
             signal_header[6] = '\0';
             if (!strcmp(signal_header, signal))
             {
-                strncpy(LAT, GPSdata + 7, 12);
-                LAT[12] = '\0';
+                strncpy(LAT, GPSdata + 7, 5);
+                LAT[5] = '\0';
 
-                strncpy(LON, GPSdata + 22, 12);
-                LON[12] = '\0';
+                strncpy(LON, GPSdata + 21, 5);
+                LON[5] = '\0';
 
                 uart_send_string(LAT);
-                uart_send_byte(0x0D);
+                uart_send_byte('\n');
                 uart_send_string(LON);
-                uart_send_byte(0x0D);
+                uart_send_byte('\n');
 
-                cur_location.x = strtod(LAT, NULL);
-                cur_location.y = strtod(LON, NULL);
+                cur_location.x = strtol(LAT, NULL, 10);
+                cur_location.y = strtol(LON, NULL, 10);
 
-                // sprintf(blah, "%d", (int)cur_location.x);
-                // uart_send_string(blah);
-                // sprintf(blah, "%d", (int)cur_location.y);
-                // uart_send_string(blah);
+                sprintf(LAT1, "%ld\n", cur_location.x);
+                sprintf(LON1, "%ld\n", cur_location.y);
 
-                bool status = geofence(cur_location, origin, geofence_dist);
+                uart_send_string(LAT1);
+                uart_send_string(LON1);
+
+                status = geofence(cur_location, origin, geofence_dist);
                 if (status != inside)
                 {
                     char mess[] = "Device has left the compound!";
+                    if (status == true)
+                        inside_check();
+                    else
+                        outside_check();
                     send_message(mess);
                 }
+
                 inside = status;
             }
         }
@@ -150,7 +183,7 @@ void get_uart_data(char *inputString)
     }
 }
 
-bool geofence(vec gps, vec origin, double distance)
+uint8_t geofence(vec gps, vec origin, double distance)
 // Function to check if the GPS location is within the geofence
 {
     vec dist = vsub(gps, origin);
@@ -187,7 +220,6 @@ int SIMInit()
     char success[] = "OK";
 
     uart_send_string("AT\n");
-    _delay_ms(1000);
 
     while (1)
     {
@@ -208,7 +240,7 @@ int SIMInit()
     _delay_ms(1000);
     uart_send_string("AT+CMGS=\"+916282591266\"\n");
     _delay_ms(1000);
-    uart_send_string("Device is Armed!\n");
+    uart_send_string("Device is Armed!");
     _delay_ms(1000);
     uart_send_byte(26); // Terminate char
     _delay_ms(1000);
@@ -231,7 +263,7 @@ void receiveSMS()
     {
         uart_send_string("RECEIVED MESSAGE: ");
         uart_send_string(receivedData);
-        uart_send_byte(0x0D);
+        uart_send_byte('\n');
         // Find the phone number in the response
         num_start = strchr(receivedData, '"'); // First quote
         if (!num_start)
@@ -248,7 +280,7 @@ void receiveSMS()
 
         uart_send_string("SENDER: ");
         uart_send_string(sender);
-        uart_send_byte(0x0D);
+        uart_send_byte('\n');
         if (strcmp(sender, PHONE_NUMBER) != 0)
             return; // Ignore unknown number
     }
@@ -265,7 +297,7 @@ void receiveSMS()
         {
             uart_send_string("MESSAGE: ");
             uart_send_string(message);
-            uart_send_byte(0x0D);
+            uart_send_byte('\n');
             parseMessage(message);
             break;
         }
@@ -288,7 +320,7 @@ void parseMessage(char *message)
 void set_origin()
 {
     uart_send_string("SET ORIGIN!");
-    uart_send_byte(0x0D);
+    uart_send_byte('\n');
     origin.x = cur_location.x;
     origin.y = cur_location.y;
 
@@ -307,14 +339,14 @@ void set_distance(int distance)
     char blah[10];
     sprintf(blah, "%d", (int)geofence_dist);
     uart_send_string(blah);
-    uart_send_byte(0x0D);
+    uart_send_byte('\n');
 
     geofence_dist = distance;
 
     uart_send_string("NEW DISTANCE: ");
     sprintf(blah, "%d", (int)geofence_dist);
     uart_send_string(blah);
-    uart_send_byte(0x0D);
+    uart_send_byte('\n');
 }
 
 void send_message(char *message)
@@ -328,5 +360,35 @@ void send_message(char *message)
 
 void error()
 {
-    PORTD |= (1 << LED_PIN);
+    PORTB |= (1 << LED_PIN);
+    _delay_ms(1000);
+    PORTB &= ~(1 << LED_PIN);
+}
+
+void outside_check()
+{
+    PORTD |= (1 << LED_PINo);
+    _delay_ms(1000);
+    PORTD &= ~(1 << LED_PINo);
+}
+
+void inside_check()
+{
+    PORTD |= (1 << LED_PINi);
+    _delay_ms(1000);
+    PORTD &= ~(1 << LED_PINi);
+}
+
+vec vsub(vec a, vec b)
+{
+    vec c;
+    c.x = a.x - b.x;
+    c.y = a.y - b.y;
+    return c;
+}
+
+double vmag(vec a)
+{
+    double sum = a.x * a.x + a.y * a.y;
+    return sqrt(sum);
 }
